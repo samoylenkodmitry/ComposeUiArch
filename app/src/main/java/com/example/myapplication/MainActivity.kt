@@ -30,6 +30,7 @@ import dagger.Component
 import dagger.hilt.android.AndroidEntryPoint
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Scope
 import javax.inject.Singleton
@@ -117,26 +118,26 @@ abstract class Presenter {
 		}
 	}
 
-	fun plugin(presenter: Presenter) {
+	fun plugin(plugin: Presenter) {
 		expectState(State.CREATED)
-		presenter.expectState(State.CREATED)
-		log(this, presenter)
-		if (presenter.parent != null) {
+		plugin.expectState(State.CREATED)
+		log(this, plugin)
+		if (plugin.parent != null) {
 			throw Exception("Presenter already has parent")
 		}
 		log(this, "adding plugin to", System.identityHashCode(plugins))
-		plugins.add(presenter)
-		presenter.parent = this
+		plugins.add(plugin)
+		plugin.parent = this
 	}
 
-	private fun unplug(presenter: Presenter) {
+	private fun unplug(plugin: Presenter) {
 		expectState(State.STOPPED)
-		presenter.expectState(State.DESTROYED)
-		log(this, presenter)
-		if (presenter.parent === this) {
-			throw Exception("Presenter is not a plugin of this presenter $presenter ${presenter.parent} $this")
+		plugin.expectState(State.DESTROYED)
+		log(this, plugin)
+		if (plugin.parent !== this) {
+			throw Exception("This is unknown plugin. $plugin ${plugin.parent} $this")
 		}
-		presenter.parent = null
+		plugin.parent = null
 	}
 
 	fun initialize() {
@@ -165,13 +166,20 @@ abstract class Presenter {
 		state = State.STARTED
 	}
 
+	var tmp: Error? = null
 	fun stop() {
+		tmp = Error("I am stopping myself: $this , parent=$parent")
 		expectState(State.STARTED)
 		log(this, plugins)
 		eventsJob?.cancel()
 		log(this, "stopping plugins", System.identityHashCode(plugins))
 		plugins.forEach {
+			if (it.state == State.STOPPED) {
+				it.tmp?.printStackTrace()
+				throw Error("plugin is already stopped, this=$this, plugin=$it, ${plugins.joinToString()}", it.tmp)
+			}
 			it.stop()
+			it.tmp = Error("I am stopping this plugin, this=$this, plugin=$it")
 		}
 		state = State.STOPPED
 	}
@@ -194,7 +202,6 @@ abstract class Presenter {
 	open fun initializeInner() = Unit
 	open fun destroyInner() = Unit
 	private suspend fun handleInner(event: UiEvent, caller: Presenter) {
-		log(this, event, caller)
 		if (parent !== caller) parent?.handleInner(event, this)
 		plugins.forEach { if (it !== caller) it.handleInner(event, this) }
 		handleSelf(event)
@@ -202,7 +209,6 @@ abstract class Presenter {
 
 	protected abstract suspend fun handleSelf(event: UiEvent)
 	fun emitEvent(event: UiEvent) {
-		log(this, event)
 		eventsScope.launch {
 			sharedEventsFlow.emit(event)
 		}
@@ -248,44 +254,55 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 	}
 
 	enum class State {
-		CREATED, INITIALIZED, STARTED, STOPPED, DESTROYED
+		CREATED, INITIALIZING, INITIALIZED, STARTING, STARTED, STOPPING, STOPPED, DESTROYING, DESTROYED,
 	}
 
-	private var state = State.CREATED
+	private val state = AtomicReference(State.CREATED)
 
 	private fun expectState(vararg expected: State) {
-		if (state !in expected) {
-			throw Exception("Ui is in state ${state}, but expected ${expected.joinToString()}")
+		if (state.get() !in expected) {
+			throw Exception("Ui is in state ${state.get()}, but expected ${expected.joinToString()}")
 		}
 	}
 
 	fun initialize() {
 		expectState(State.CREATED)
+		if (!state.compareAndSet(State.CREATED, State.INITIALIZING))
+			throw Exception("Ui is in state ${state}, but expected ${State.CREATED}")
 		log(this)
 		presenter.initialize()
-		state = State.INITIALIZED
+		if (!state.compareAndSet(State.INITIALIZING, State.INITIALIZED))
+			throw Exception("Ui is in state ${state}, but expected ${State.INITIALIZING}")
 	}
 
 
 	fun start() {
 		expectState(State.INITIALIZED, State.STOPPED)
+		state.set(State.STARTING)
 		log(this)
 		presenter.start()
-		state = State.STARTED
+		if (!state.compareAndSet(State.STARTING, State.STARTED))
+			throw Exception("Ui is in state ${state}, but expected ${State.STARTING}")
 	}
 
 	fun stop() {
 		expectState(State.STARTED)
+		if (!state.compareAndSet(State.STARTED, State.STOPPING))
+			throw Exception("Ui is in state ${state}, but expected ${State.STARTED}")
 		log(this)
 		presenter.stop()
-		state = State.STOPPED
+		if (!state.compareAndSet(State.STOPPING, State.STOPPED))
+			throw Exception("Ui is in state ${state}, but expected ${State.STOPPING}")
 	}
 
 	fun destroy() {
 		expectState(State.STOPPED)
+		if (!state.compareAndSet(State.STOPPED, State.DESTROYING))
+			throw Exception("Ui is in state ${state}, but expected ${State.STOPPED}")
 		log(this)
 		presenter.destroy()
-		state = State.DESTROYED
+		if (!state.compareAndSet(State.DESTROYING, State.DESTROYED))
+			throw Exception("Ui is in state ${state}, but expected ${State.DESTROYING}")
 	}
 
 	fun event(event: UiEvent) {
