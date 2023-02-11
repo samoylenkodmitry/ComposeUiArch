@@ -33,6 +33,7 @@ import java.util.*
 import javax.inject.Inject
 import javax.inject.Scope
 import javax.inject.Singleton
+import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +81,15 @@ abstract class Presenter {
 		log("creating a new presenter", this)
 	}
 
+	enum class State {
+		CREATED,
+		INITIALIZED,
+		STARTED,
+		STOPPED,
+		DESTROYED
+	}
+
+	private var state = State.CREATED
 	private var eventsJob: Job? = null
 	private val plugins = mutableListOf<Presenter>()
 	private var parent: Presenter? = null
@@ -101,7 +111,14 @@ abstract class Presenter {
 		onBufferOverflow = BufferOverflow.SUSPEND
 	)
 
+	private fun expectState(vararg expected: State) {
+		if (state !in expected) {
+			throw Exception("Presenter is in state $state, but expected $expected")
+		}
+	}
+
 	fun plugin(presenter: Presenter) {
+		expectState(State.CREATED)
 		log(this, presenter)
 		if (presenter.parent != null) {
 			throw Exception("Presenter already has parent")
@@ -112,6 +129,7 @@ abstract class Presenter {
 	}
 
 	private fun unplug(presenter: Presenter) {
+		expectState(State.DESTROYED)
 		log(this, presenter)
 		if (presenter.parent === this) {
 			throw Exception("Presenter is not a plugin of this presenter $presenter ${presenter.parent} $this")
@@ -120,12 +138,15 @@ abstract class Presenter {
 	}
 
 	fun initialize() {
+		expectState(State.CREATED)
 		log(this)
 		plugins.forEach { it.initialize() }
 		initializeInner()
+		state = State.INITIALIZED
 	}
 
 	fun start() {
+		expectState(State.INITIALIZED, State.STOPPED)
 		log(this)
 		plugins.forEach { it.start() }
 		val ths = this
@@ -135,16 +156,20 @@ abstract class Presenter {
 					handleInner(event, ths)
 				}
 		}
+		state = State.STARTED
 	}
 
 	fun stop() {
+		expectState(State.STARTED)
 		log(this, plugins)
 		eventsJob?.cancel()
 		log(this, "stopping plugins", System.identityHashCode(plugins))
 		plugins.forEach { it.stop() }
+		state = State.STOPPED
 	}
 
 	fun destroy() {
+		expectState(State.STOPPED)
 		log(this, plugins)
 		destroyInner()
 		plugins.forEach {
@@ -153,6 +178,9 @@ abstract class Presenter {
 		}
 		log(this, "clearing plugins", System.identityHashCode(plugins))
 		plugins.clear()
+		workersSupervisorJob.cancel()
+		eventsSupervisorJob.cancel()
+		state = State.DESTROYED
 	}
 
 	open fun initializeInner() = Unit
@@ -211,25 +239,45 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 		}
 	}
 
+	enum class State {
+		CREATED, INITIALIZED, STARTED, STOPPED, DESTROYED
+	}
+
+	private var state = State.CREATED
+
+	private fun expectState(vararg expected: State) {
+		if (state !in expected) {
+			throw Exception("Ui is in state ${state}, but expected $expected")
+		}
+	}
+
 	fun initialize() {
+		expectState(State.CREATED)
 		log(this)
 		presenter.initialize()
+		state = State.INITIALIZED
 	}
 
 
 	fun start() {
+		expectState(State.INITIALIZED, State.STOPPED)
 		log(this)
 		presenter.start()
+		state = State.STARTED
 	}
 
 	fun stop() {
+		expectState(State.STARTED)
 		log(this)
 		presenter.stop()
+		state = State.STOPPED
 	}
 
 	fun destroy() {
+		expectState(State.STOPPED)
 		log(this)
 		presenter.destroy()
+		state = State.DESTROYED
 	}
 
 	fun event(event: UiEvent) {
@@ -344,7 +392,7 @@ data class ProgressState(val progress: Float, val state: String) : UiState
 
 class RedAndBlueInteractor @Inject constructor() : Interactor {
 	fun handle(): Flow<RedAndBlueState> {
-		return flowOf(RedAndBlueState(isRow = true))
+		return flowOf(RedAndBlueState(isRow = Random.nextBoolean()))
 	}
 }
 
