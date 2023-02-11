@@ -203,12 +203,17 @@ abstract class Presenter {
 	open fun destroyInner() = Unit
 
 	/**
+	 * Priority:
+	 * 1. Self
+	 * 2. Plugins
+	 * 3. Parent
+	 *
 	 * @return true if event was handled
 	 */
 	private suspend fun handleInner(event: UiEvent, caller: Presenter): Boolean =
-		parent !== caller && parent?.handleInner(event, this) ?: false ||
+		handleSelf(event) ||
 			plugins.any { it !== caller && it.handleInner(event, this) } ||
-			handleSelf(event)
+			parent !== caller && parent?.handleInner(event, this) ?: false
 
 
 	protected abstract suspend fun handleSelf(event: UiEvent): Boolean
@@ -229,8 +234,19 @@ abstract class Presenter {
 	}
 
 	suspend fun emitState(state: UiState) {
+		emitStateInner(state, this)
+	}
+
+	/**
+	 * Priority:
+	 * 1. Self
+	 * 2. Plugins
+	 * 3. Parent
+	 */
+	private suspend fun emitStateInner(state: UiState, caller: Presenter) {
 		sharedStatesFlow.emit(state)
-		plugins.forEach { it.emitState(state) }
+		plugins.forEach { if (it != caller) it.emitStateInner(state, this) }
+		if (parent != caller) parent?.emitStateInner(state, this)
 	}
 
 	fun sharedStates(): Flow<UiState> = sharedStatesFlow
