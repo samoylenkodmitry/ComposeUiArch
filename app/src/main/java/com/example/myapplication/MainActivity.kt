@@ -576,7 +576,9 @@ class ProgressAndStateUi @Inject constructor(presenter: ProgressAndStatePresente
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val progress = state.filterIsInstance<ProgressState>().collectAsState(initial = ProgressState(-1f, ""))
+
 		if (progress.value.progress >= 0) {
+			log("ProgressAndStateUi: progress: " + progress.value)
 			Column {
 				LinearProgressIndicator(progress = progress.value.progress)
 				Text(text = progress.value.state)
