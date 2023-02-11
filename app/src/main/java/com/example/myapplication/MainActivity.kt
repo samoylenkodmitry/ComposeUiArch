@@ -119,6 +119,7 @@ abstract class Presenter {
 
 	fun plugin(presenter: Presenter) {
 		expectState(State.CREATED)
+		presenter.expectState(State.CREATED)
 		log(this, presenter)
 		if (presenter.parent != null) {
 			throw Exception("Presenter already has parent")
@@ -130,6 +131,7 @@ abstract class Presenter {
 
 	private fun unplug(presenter: Presenter) {
 		expectState(State.DESTROYED)
+		presenter.expectState(State.DESTROYED)
 		log(this, presenter)
 		if (presenter.parent === this) {
 			throw Exception("Presenter is not a plugin of this presenter $presenter ${presenter.parent} $this")
@@ -140,7 +142,9 @@ abstract class Presenter {
 	fun initialize() {
 		expectState(State.CREATED)
 		log(this)
-		plugins.forEach { it.initialize() }
+		plugins.forEach {
+			it.initialize()
+		}
 		initializeInner()
 		state = State.INITIALIZED
 	}
@@ -148,7 +152,9 @@ abstract class Presenter {
 	fun start() {
 		expectState(State.INITIALIZED, State.STOPPED)
 		log(this)
-		plugins.forEach { it.start() }
+		plugins.forEach {
+			it.start()
+		}
 		val ths = this
 		eventsJob = eventsScope.launch {
 			sharedEventsFlow
@@ -164,7 +170,9 @@ abstract class Presenter {
 		log(this, plugins)
 		eventsJob?.cancel()
 		log(this, "stopping plugins", System.identityHashCode(plugins))
-		plugins.forEach { it.stop() }
+		plugins.forEach {
+			it.stop()
+		}
 		state = State.STOPPED
 	}
 
