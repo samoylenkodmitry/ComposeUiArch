@@ -363,10 +363,15 @@ class Navigation @Inject constructor() {
 
 	var current = mutableStateOf<Ui?>(null)
 	private fun replace(new: Ui) {
-		val old = current.value
+		Error("new UI $new, thread: ${Thread.currentThread().name} ${Thread.currentThread().id}").printStackTrace()
 		new.initialize()
 		new.start()
-		current.value = new
+		val old = synchronized(this) {
+			val old = current.value
+			log("replacing $old with $new")
+			current.value = new
+			old
+		}
 		old?.stop()
 		old?.destroy()
 	}
