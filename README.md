@@ -10,6 +10,8 @@ The architecture is based on the unidirectional-data-flow.
 From `UI` layer we send `events` to the `Presenter` layer.
 From the `Presenter` layer we send `states` to the `UI` layer.
 Each `UI` component can add another `UI` component and their presenters will act as plugins.
+For unidirectional data flow we use `Flow` from Kotlin coroutines.
+For better project structure we use `Dagger` for dependency injection.
 #### The example
 ```kotlin
 class RedAndBlueBoxesUI @Inject constructor(
