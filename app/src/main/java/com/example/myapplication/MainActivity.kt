@@ -201,13 +201,17 @@ abstract class Presenter {
 
 	open fun initializeInner() = Unit
 	open fun destroyInner() = Unit
-	private suspend fun handleInner(event: UiEvent, caller: Presenter) {
-		if (parent !== caller) parent?.handleInner(event, this)
-		plugins.forEach { if (it !== caller) it.handleInner(event, this) }
-		handleSelf(event)
-	}
 
-	protected abstract suspend fun handleSelf(event: UiEvent)
+	/**
+	 * @return true if event was handled
+	 */
+	private suspend fun handleInner(event: UiEvent, caller: Presenter): Boolean =
+		parent !== caller && parent?.handleInner(event, this) ?: false ||
+			plugins.any { it !== caller && it.handleInner(event, this) } ||
+			handleSelf(event)
+
+
+	protected abstract suspend fun handleSelf(event: UiEvent): Boolean
 	fun emitEvent(event: UiEvent) {
 		eventsScope.launch {
 			sharedEventsFlow.emit(event)
@@ -439,9 +443,7 @@ class RedAndBlueBoxesPresenter @Inject constructor(
 		}
 	}
 
-	override suspend fun handleSelf(event: UiEvent) {
-		log("handleSelf: $event thread: ${Thread.currentThread().name} this: $this")
-	}
+	override suspend fun handleSelf(event: UiEvent) = false
 
 }
 
@@ -489,13 +491,14 @@ class RedBoxWithTimerUpPresenter @Inject constructor(
 	private val timeProvider: LocalTimeProvider,
 	private val dateFormatter: DateFormatter,
 ) : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
 		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
 		when (event) {
 			is ResetTimerEvent -> {
 				startTimerWorker()
 			}
 		}
+		return false
 	}
 
 	override fun initializeInner() {
@@ -550,9 +553,7 @@ class RedBoxWithTimerUpUi @Inject constructor(
 }
 
 class ProgressAndStatePresenter @Inject constructor() : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
-		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
-	}
+	override suspend fun handleSelf(event: UiEvent) = false
 }
 
 class ProgressAndStateUi @Inject constructor(presenter: ProgressAndStatePresenter) : Ui(presenter) {
@@ -573,7 +574,7 @@ class BlueBoxWithTimerDownPresenter @Inject constructor(
 	private val timeProvider: LocalTimeProvider,
 	private val dateFormatter: DateFormatter,
 ) : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
 		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
 		when (event) {
 			is ResetTimerEvent -> {
@@ -581,6 +582,7 @@ class BlueBoxWithTimerDownPresenter @Inject constructor(
 				startTimerWorker()
 			}
 		}
+		return false
 	}
 
 	override fun initializeInner() {
@@ -604,9 +606,7 @@ class BlueBoxWithTimerDownPresenter @Inject constructor(
 }
 
 class ResetButtonPresenter @Inject constructor() : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
-		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
-	}
+	override suspend fun handleSelf(event: UiEvent) = false
 }
 
 class ResetButtonUi @Inject constructor(presenter: ResetButtonPresenter) : Ui(presenter) {
@@ -622,7 +622,7 @@ class ResetButtonUi @Inject constructor(presenter: ResetButtonPresenter) : Ui(pr
 class GoBlueButtonPresenter @Inject constructor(
 	private val navigation: Navigation
 ) : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
 		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
 		when (event) {
 			is GoBlueClickedEvent -> {
@@ -630,8 +630,10 @@ class GoBlueButtonPresenter @Inject constructor(
 					emulateProgressDelay("going blue")
 					navigation.navigateToBlue()
 				}
+				return true
 			}
 		}
+		return false
 	}
 }
 
@@ -647,7 +649,7 @@ class GoBlueButtonUi @Inject constructor(presenter: GoBlueButtonPresenter) : Ui(
 class GoRedButtonPresenter @Inject constructor(
 	private val navigation: Navigation
 ) : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
 		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
 		when (event) {
 			is GoRedClickedEvent -> {
@@ -655,8 +657,10 @@ class GoRedButtonPresenter @Inject constructor(
 					emulateProgressDelay("going red and blue")
 					navigation.navigateToRed()
 				}
+				return true
 			}
 		}
+		return false
 	}
 }
 
@@ -673,7 +677,7 @@ class GoRedButtonUi @Inject constructor(presenter: GoRedButtonPresenter) : Ui(pr
 class GoRedAndBlueButtonPresenter @Inject constructor(
 	private val navigation: Navigation
 ) : Presenter() {
-	override suspend fun handleSelf(event: UiEvent) {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
 		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
 		when (event) {
 			is GoRedAndBlueClickedEvent -> {
@@ -681,8 +685,10 @@ class GoRedAndBlueButtonPresenter @Inject constructor(
 					emulateProgressDelay("going red and blue")
 					navigation.navigateToRedAndBlue()
 				}
+				return true
 			}
 		}
+		return false
 	}
 }
 
