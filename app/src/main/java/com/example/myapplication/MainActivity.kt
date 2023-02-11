@@ -1,6 +1,7 @@
 package com.example.myapplication
 
 import android.os.Bundle
+import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -40,7 +42,6 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -55,6 +56,9 @@ class MainActivity : ComponentActivity() {
 			MyApplicationTheme {
 				Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
 					Column {
+						SideEffect {
+							assertMainThread()
+						}
 						LaunchedEffect(Unit) {
 							app.navigation().navigateToRedAndBlue()
 						}
@@ -102,6 +106,7 @@ abstract class Presenter {
 		if (presenter.parent != null) {
 			throw Exception("Presenter already has parent")
 		}
+		log(this, "adding plugin to", System.identityHashCode(plugins))
 		plugins.add(presenter)
 		presenter.parent = this
 	}
@@ -133,17 +138,21 @@ abstract class Presenter {
 	}
 
 	fun stop() {
-		log(this)
+		log(this, plugins)
 		eventsJob?.cancel()
+		log(this, "stopping plugins", System.identityHashCode(plugins))
 		plugins.forEach { it.stop() }
 	}
 
 	fun destroy() {
-		log(this)
-		plugins.forEach { unplug(it) }
-		plugins.clear()
-		plugins.forEach { it.destroy() }
+		log(this, plugins)
 		destroyInner()
+		plugins.forEach {
+			it.destroy()
+			unplug(it)
+		}
+		log(this, "clearing plugins", System.identityHashCode(plugins))
+		plugins.clear()
 	}
 
 	open fun initializeInner() = Unit
@@ -174,12 +183,11 @@ abstract class Presenter {
 	}
 
 	suspend fun emitState(state: UiState) {
-		log(this, state)
 		sharedStatesFlow.emit(state)
 		plugins.forEach { it.emitState(state) }
 	}
 
-	fun sharedStates(): Flow<UiState> = sharedStatesFlow.asSharedFlow()
+	fun sharedStates(): Flow<UiState> = sharedStatesFlow
 	suspend fun emulateProgressDelay(state: String) {
 		log(this, state)
 		for (i in 0..100) {
@@ -231,7 +239,6 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 
 	@Composable
 	operator fun invoke() {
-		log(this)
 		RenderSelf(presenter.sharedStates())
 	}
 
@@ -645,7 +652,22 @@ class BlueBoxWithTimerDownUI @Inject constructor(
 fun log(vararg msg: Any) {
 	val trace = Error().stackTrace
 	val caller = trace[1]
-	Log.d("Arch test", "${msg.joinToString { "$it" }} - ${caller.methodName} - ${caller.fileName}:${caller.lineNumber}")
+	Log.d(
+		"Arch test", "${caller.className}.${caller.methodName}(${caller.fileName}:${caller.lineNumber})" +
+		" ${Thread.currentThread().name}::: ${msg.joinToString { "$it" }}"
+	)
+}
+
+fun assertMainThread() {
+	if (Looper.getMainLooper().thread != Thread.currentThread()) {
+		throw IllegalStateException("Not on main thread")
+	}
+}
+
+fun assertNotMainThread() {
+	if (Looper.getMainLooper().thread == Thread.currentThread()) {
+		throw IllegalStateException("On main thread")
+	}
 }
 
 @Preview(showBackground = true)
