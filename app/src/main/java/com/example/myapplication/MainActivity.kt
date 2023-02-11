@@ -77,7 +77,7 @@ interface UiState
 interface Interactor
 abstract class Presenter {
 	init {
-		log(this)
+		log("creating a new presenter", this)
 	}
 
 	private var eventsJob: Job? = null
@@ -113,8 +113,8 @@ abstract class Presenter {
 
 	private fun unplug(presenter: Presenter) {
 		log(this, presenter)
-		if (presenter.parent !== this) {
-			throw Exception("Presenter is not a plugin of this presenter")
+		if (presenter.parent === this) {
+			throw Exception("Presenter is not a plugin of this presenter $presenter ${presenter.parent} $this")
 		}
 		presenter.parent = null
 	}
@@ -205,7 +205,7 @@ abstract class Presenter {
  */
 abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 	init {
-		log(this)
+		log("creating a new Ui", this)
 		subcomponents.forEach {
 			presenter.plugin(it.presenter)
 		}
@@ -249,7 +249,7 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 // di
 @Scope
 @Retention(AnnotationRetention.RUNTIME)
-annotation class UIScope
+annotation class UiScope
 
 @Component
 @Singleton
@@ -260,21 +260,23 @@ interface AppDaggerSingletonesComponent {
 
 	companion object Holder {
 		val instance: AppDaggerSingletonesComponent by lazy {
+			log("creating a new AppDaggerSingletonesComponent")
 			DaggerAppDaggerSingletonesComponent.builder().build()
 		}
 	}
 }
 
 @Component(dependencies = [AppDaggerSingletonesComponent::class])
-@UIScope
-interface UIComponent {
-	fun redBoxWithTimerUpUI(): RedBoxWithTimerUpUI
-	fun blueBoxWithTimerDownUI(): BlueBoxWithTimerDownUI
-	fun redAndBlueBoxesUI(): RedAndBlueBoxesUI
+@UiScope
+interface UiComponent {
+	fun redBoxWithTimerUpUi(): RedBoxWithTimerUpUi
+	fun blueBoxWithTimerDownUi(): BlueBoxWithTimerDownUi
+	fun redAndBlueBoxesUi(): RedAndBlueBoxesUi
 
 	companion object {
-		fun create(): UIComponent {
-			return DaggerUIComponent.builder()
+		fun create(): UiComponent {
+			log("creating a new UiComponent")
+			return DaggerUiComponent.builder()
 				.appDaggerSingletonesComponent(AppDaggerSingletonesComponent.instance).build()
 		}
 	}
@@ -282,6 +284,10 @@ interface UIComponent {
 
 @Singleton
 class Navigation @Inject constructor() {
+	init {
+		log("init navigation", this)
+	}
+
 	var current = mutableStateOf<Ui?>(null)
 	private fun replace(new: Ui) {
 		val old = current.value
@@ -293,15 +299,15 @@ class Navigation @Inject constructor() {
 	}
 
 	fun navigateToRed() {
-		replace(UIComponent.create().redBoxWithTimerUpUI())
+		replace(UiComponent.create().redBoxWithTimerUpUi())
 	}
 
 	fun navigateToBlue() {
-		replace(UIComponent.create().blueBoxWithTimerDownUI())
+		replace(UiComponent.create().blueBoxWithTimerDownUi())
 	}
 
 	fun navigateToRedAndBlue() {
-		replace(UIComponent.create().redAndBlueBoxesUI())
+		replace(UiComponent.create().redAndBlueBoxesUi())
 	}
 }
 
@@ -309,6 +315,10 @@ class Navigation @Inject constructor() {
 
 @Singleton
 class LocalTimeProvider @Inject constructor() {
+	init {
+		log("init LocalTimeProvider", this)
+	}
+
 	fun getTime(): Long {
 		return System.currentTimeMillis()
 	}
@@ -316,6 +326,10 @@ class LocalTimeProvider @Inject constructor() {
 
 @Singleton
 class DateFormatter @Inject constructor() {
+	init {
+		log("init DateFormatter", this)
+	}
+
 	private val dateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 	fun format(time: Long): String {
 		return dateFormat.format(time)
@@ -353,31 +367,27 @@ class RedAndBlueBoxesPresenter @Inject constructor(
 
 }
 
-class RedAndBlueBoxesUI @Inject constructor(
+class RedAndBlueBoxesUi @Inject constructor(
 	presenter: RedAndBlueBoxesPresenter,
-	val c1: RedBoxWithTimerUpUI,
-	val c2: BlueBoxWithTimerDownUI,
-	val goRedButtonUI: GoRedButtonUI,
-	val goBlueButtonUI: GoBlueButtonUI,
-	val resetButtonUI: ResetButtonUI
+	val c1: RedBoxWithTimerUpUi,
+	val c2: BlueBoxWithTimerDownUi,
+	val goRedButtonUi: GoRedButtonUi,
+	val goBlueButtonUi: GoBlueButtonUi,
+	val resetButtonUi: ResetButtonUi,
+	val progressAndStateUi: ProgressAndStateUi
 ) : Ui(
 	presenter,
 	c1, c2,
-	goRedButtonUI, goBlueButtonUI, resetButtonUI
+	goRedButtonUi, goBlueButtonUi, resetButtonUi
 ) {
-	init {
-		log("constructor RedAndBlueBoxesUI: $this")
-	}
-
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val redAndBlueState = state.filterIsInstance<RedAndBlueState>().collectAsState(initial = RedAndBlueState(false))
-		val progress = state.filterIsInstance<ProgressState>().collectAsState(initial = ProgressState(-1f, ""))
 		Column {
 			Row {
-				resetButtonUI()
-				goRedButtonUI()
-				goBlueButtonUI()
+				resetButtonUi()
+				goRedButtonUi()
+				goBlueButtonUi()
 			}
 
 			if (redAndBlueState.value.isRow) {
@@ -391,9 +401,7 @@ class RedAndBlueBoxesUI @Inject constructor(
 					c2()
 				}
 			}
-			if (progress.value.progress >= 0) {
-				LinearProgressIndicator(progress = progress.value.progress)
-			}
+			progressAndStateUi()
 		}
 	}
 }
@@ -432,23 +440,18 @@ class RedBoxWithTimerUpPresenter @Inject constructor(
 }
 
 
-class RedBoxWithTimerUpUI @Inject constructor(
+class RedBoxWithTimerUpUi @Inject constructor(
 	presenter: RedBoxWithTimerUpPresenter,
-	val resetButtonUI: ResetButtonUI,
-	val goBlueButtonUI: GoBlueButtonUI,
-	val goRedAndBlueButtonUI: GoRedAndBlueButtonUI,
+	val resetButtonUi: ResetButtonUi,
+	val goBlueButtonUi: GoBlueButtonUi,
+	val goRedAndBlueButtonUi: GoRedAndBlueButtonUi,
 	val progressAndStateUi: ProgressAndStateUi
 ) : Ui(
 	presenter,
-	resetButtonUI,
-	goBlueButtonUI,
-	goRedAndBlueButtonUI
+	resetButtonUi,
+	goBlueButtonUi,
+	goRedAndBlueButtonUi
 ) {
-
-	init {
-		log("constructor RedBoxWithTimerUpUI: ${System.identityHashCode(this)}")
-	}
-
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val redBoxState = state.filterIsInstance<RedBoxState>().collectAsState(initial = RedBoxState(""))
@@ -460,9 +463,9 @@ class RedBoxWithTimerUpUI @Inject constructor(
 			Column {
 				Text(text = redBoxState.value.time)
 				progressAndStateUi()
-				resetButtonUI()
-				goBlueButtonUI()
-				goRedAndBlueButtonUI()
+				resetButtonUi()
+				goBlueButtonUi()
+				goRedAndBlueButtonUi()
 			}
 		}
 	}
@@ -528,7 +531,7 @@ class ResetButtonPresenter @Inject constructor() : Presenter() {
 	}
 }
 
-class ResetButtonUI @Inject constructor(presenter: ResetButtonPresenter) : Ui(presenter) {
+class ResetButtonUi @Inject constructor(presenter: ResetButtonPresenter) : Ui(presenter) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(ResetTimerEvent()) }) {
@@ -554,7 +557,7 @@ class GoBlueButtonPresenter @Inject constructor(
 	}
 }
 
-class GoBlueButtonUI @Inject constructor(presenter: GoBlueButtonPresenter) : Ui(presenter) {
+class GoBlueButtonUi @Inject constructor(presenter: GoBlueButtonPresenter) : Ui(presenter) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(GoBlueClickedEvent()) }) {
@@ -580,7 +583,7 @@ class GoRedButtonPresenter @Inject constructor(
 }
 
 
-class GoRedButtonUI @Inject constructor(presenter: GoRedButtonPresenter) : Ui(presenter) {
+class GoRedButtonUi @Inject constructor(presenter: GoRedButtonPresenter) : Ui(presenter) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(GoRedClickedEvent()) }) {
@@ -605,7 +608,7 @@ class GoRedAndBlueButtonPresenter @Inject constructor(
 	}
 }
 
-class GoRedAndBlueButtonUI @Inject constructor(presenter: GoRedAndBlueButtonPresenter) : Ui(presenter) {
+class GoRedAndBlueButtonUi @Inject constructor(presenter: GoRedAndBlueButtonPresenter) : Ui(presenter) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(GoRedAndBlueClickedEvent()) }) {
@@ -614,22 +617,18 @@ class GoRedAndBlueButtonUI @Inject constructor(presenter: GoRedAndBlueButtonPres
 	}
 }
 
-class BlueBoxWithTimerDownUI @Inject constructor(
+class BlueBoxWithTimerDownUi @Inject constructor(
 	presenter: BlueBoxWithTimerDownPresenter,
-	val resetButtonUI: ResetButtonUI,
-	val goRedButtonUI: GoRedButtonUI,
-	val goRedAndBlueButtonUI: GoRedAndBlueButtonUI,
+	val resetButtonUi: ResetButtonUi,
+	val goRedButtonUi: GoRedButtonUi,
+	val goRedAndBlueButtonUi: GoRedAndBlueButtonUi,
 	val progressAndStateUi: ProgressAndStateUi
 ) : Ui(
 	presenter,
-	resetButtonUI,
-	goRedButtonUI,
-	goRedAndBlueButtonUI
+	resetButtonUi,
+	goRedButtonUi,
+	goRedAndBlueButtonUi
 ) {
-	init {
-		log("constructor BlueBoxWithTimerDownUI: ${System.identityHashCode(this)}")
-	}
-
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val blueBoxState = state.filterIsInstance<BlueBoxState>().collectAsState(initial = BlueBoxState(""))
@@ -641,9 +640,9 @@ class BlueBoxWithTimerDownUI @Inject constructor(
 			Column {
 				Text(text = blueBoxState.value.time)
 				progressAndStateUi()
-				resetButtonUI()
-				goRedButtonUI()
-				goRedAndBlueButtonUI()
+				resetButtonUi()
+				goRedButtonUi()
+				goRedAndBlueButtonUi()
 			}
 		}
 	}
