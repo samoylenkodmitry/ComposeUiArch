@@ -369,15 +369,15 @@ class RedAndBlueBoxesPresenter @Inject constructor(
 
 class RedAndBlueBoxesUi @Inject constructor(
 	presenter: RedAndBlueBoxesPresenter,
-	val c1: RedBoxWithTimerUpUi,
-	val c2: BlueBoxWithTimerDownUi,
+	val redBoxWithTimerUp: RedBoxWithTimerUpUi,
+	val blueBoxWithTimerDown: BlueBoxWithTimerDownUi,
 	val goRedButtonUi: GoRedButtonUi,
 	val goBlueButtonUi: GoBlueButtonUi,
 	val resetButtonUi: ResetButtonUi,
 	val progressAndStateUi: ProgressAndStateUi
 ) : Ui(
 	presenter,
-	c1, c2,
+	redBoxWithTimerUp, blueBoxWithTimerDown,
 	goRedButtonUi, goBlueButtonUi, resetButtonUi
 ) {
 	@Composable
@@ -392,13 +392,13 @@ class RedAndBlueBoxesUi @Inject constructor(
 
 			if (redAndBlueState.value.isRow) {
 				Row {
-					c1()
-					c2()
+					redBoxWithTimerUp()
+					blueBoxWithTimerDown()
 				}
 			} else {
 				Column {
-					c1()
-					c2()
+					redBoxWithTimerUp()
+					blueBoxWithTimerDown()
 				}
 			}
 			progressAndStateUi()
