@@ -113,7 +113,7 @@ abstract class Presenter {
 
 	private fun expectState(vararg expected: State) {
 		if (state !in expected) {
-			throw Exception("Presenter is in state $state, but expected $expected")
+			throw Exception("Presenter is in state $state, but expected ${expected.joinToString()}")
 		}
 	}
 
@@ -130,7 +130,7 @@ abstract class Presenter {
 	}
 
 	private fun unplug(presenter: Presenter) {
-		expectState(State.DESTROYED)
+		expectState(State.STOPPED)
 		presenter.expectState(State.DESTROYED)
 		log(this, presenter)
 		if (presenter.parent === this) {
@@ -255,7 +255,7 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 
 	private fun expectState(vararg expected: State) {
 		if (state !in expected) {
-			throw Exception("Ui is in state ${state}, but expected $expected")
+			throw Exception("Ui is in state ${state}, but expected ${expected.joinToString()}")
 		}
 	}
 
