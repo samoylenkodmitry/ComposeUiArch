@@ -22,9 +22,11 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.myapplication.ui.theme.MyApplicationTheme
 import dagger.Component
 import dagger.hilt.android.AndroidEntryPoint
@@ -102,7 +104,7 @@ abstract class Presenter {
 	private val eventsCoroutineContext = Dispatchers.Default + eventsSupervisorJob
 	private val eventsScope = CoroutineScope(eventsCoroutineContext)
 	private val sharedStatesFlow = MutableSharedFlow<UiState>(
-		replay = 1,
+		replay = 100,
 		extraBufferCapacity = 10,
 		onBufferOverflow = BufferOverflow.SUSPEND
 	)
@@ -193,7 +195,7 @@ abstract class Presenter {
 			unplug(it)
 		}
 		log(this, "clearing plugins", System.identityHashCode(plugins))
-		plugins.clear()
+		//plugins.clear() <-- concurrent modification exception
 		workersSupervisorJob.cancel()
 		eventsSupervisorJob.cancel()
 		state = State.DESTROYED
@@ -225,9 +227,14 @@ abstract class Presenter {
 
 	fun launchWorker(tag: String, block: suspend CoroutineScope.() -> Unit) {
 		log(this, tag)
-		workers[tag]?.cancel()
+		val who = this
+		val prevJob = workers[tag]
+		if (prevJob != null) {
+			log(this, "canceling prev job", tag)
+			prevJob.cancel()
+		}
 		val workerJob = workersScope.launch {
-			log("$this: launchWorker: $tag")
+			log("$who: launchWorker: $tag")
 			block()
 		}
 		workers[tag] = workerJob
@@ -244,6 +251,7 @@ abstract class Presenter {
 	 * 3. Parent
 	 */
 	private suspend fun emitStateInner(state: UiState, caller: Presenter) {
+		if (state is ProgressState) log(this, state, caller)
 		sharedStatesFlow.emit(state)
 		plugins.forEach { if (it != caller) it.emitStateInner(state, this) }
 		if (parent != caller) parent?.emitStateInner(state, this)
@@ -252,12 +260,18 @@ abstract class Presenter {
 	fun sharedStates(): Flow<UiState> = sharedStatesFlow
 	suspend fun emulateProgressDelay(state: String) {
 		log(this, state)
-		for (i in 0..100) {
-			emitState(ProgressState(i.toFloat() / 100, state))
-			delay(10.milliseconds)
+		var time = 0
+		while (time < 1000) {
+			emitState(ProgressState(time.toFloat() / 100, state))
+			val delta = Random.nextInt(2, 20)
+			time += delta
+			delay(delta.milliseconds)
 		}
 		emitState(ProgressState(-1f, ""))
 	}
+
+	fun ensureStarted() = state == State.STARTED
+
 }
 
 
@@ -332,6 +346,8 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 
 	@Composable
 	operator fun invoke() {
+		if (!presenter.ensureStarted()) throw Exception("$this Ui is not started")
+
 		RenderSelf(presenter.sharedStates())
 	}
 
@@ -365,6 +381,7 @@ interface UiComponent {
 	fun redBoxWithTimerUpUi(): RedBoxWithTimerUpUi
 	fun blueBoxWithTimerDownUi(): BlueBoxWithTimerDownUi
 	fun redAndBlueBoxesUi(): RedAndBlueBoxesUi
+	fun vortexUi(): VortexUi
 
 	companion object {
 		fun create(): UiComponent {
@@ -406,6 +423,10 @@ class Navigation @Inject constructor() {
 
 	fun navigateToRedAndBlue() {
 		replace(UiComponent.create().redAndBlueBoxesUi())
+	}
+
+	fun navigateToVortex() {
+		replace(UiComponent.create().vortexUi())
 	}
 }
 
@@ -470,11 +491,13 @@ class RedAndBlueBoxesUi @Inject constructor(
 	val goRedButtonUi: GoRedButtonUi,
 	val goBlueButtonUi: GoBlueButtonUi,
 	val resetButtonUi: ResetButtonUi,
-	val progressAndStateUi: ProgressAndStateUi
+	val progressAndStateUi: ProgressAndStateUi,
+	val goVortexButtonUi: GoVortexButtonUi
 ) : Ui(
 	presenter,
 	redBoxWithTimerUp, blueBoxWithTimerDown,
-	goRedButtonUi, goBlueButtonUi, resetButtonUi
+	goRedButtonUi, goBlueButtonUi, resetButtonUi, goVortexButtonUi, progressAndStateUi
+
 ) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
@@ -484,6 +507,7 @@ class RedAndBlueBoxesUi @Inject constructor(
 				resetButtonUi()
 				goRedButtonUi()
 				goBlueButtonUi()
+				goVortexButtonUi()
 			}
 
 			if (redAndBlueState.value.isRow) {
@@ -523,14 +547,15 @@ class RedBoxWithTimerUpPresenter @Inject constructor(
 	}
 
 	private fun startTimerWorker() {
+		val who = this
 		launchWorker("timer") {
 			emulateProgressDelay("starting timer")
-			log("startTimerWorker: timer started")
+			log("startTimerWorker: timer started", who)
 			var time = timeProvider.getTime()
 			while (true) {
 				emitState(RedBoxState(dateFormatter.format(time)))
 				time++
-				delay(500.milliseconds)
+				delay(Random.nextInt(10, 1000).milliseconds)
 			}
 		}
 	}
@@ -547,18 +572,19 @@ class RedBoxWithTimerUpUi @Inject constructor(
 	presenter,
 	resetButtonUi,
 	goBlueButtonUi,
-	goRedAndBlueButtonUi
+	goRedAndBlueButtonUi,
+	progressAndStateUi
 ) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val redBoxState = state.filterIsInstance<RedBoxState>().collectAsState(initial = RedBoxState(""))
 		Box(
 			modifier = Modifier
-				.width(130.dp)
+				.width(430.dp)
 				.background(color = Color.Red)
 		) {
 			Column {
-				Text(text = redBoxState.value.time)
+				Text(text = redBoxState.value.time, fontSize = 30.sp, color = Color.White)
 				progressAndStateUi()
 				resetButtonUi()
 				goBlueButtonUi()
@@ -581,7 +607,7 @@ class ProgressAndStateUi @Inject constructor(presenter: ProgressAndStatePresente
 			log("ProgressAndStateUi: progress: " + progress.value)
 			Column {
 				LinearProgressIndicator(progress = progress.value.progress)
-				Text(text = progress.value.state)
+				Text(text = progress.value.state, fontSize = 30.sp, color = Color.White)
 			}
 		}
 	}
@@ -617,7 +643,7 @@ class BlueBoxWithTimerDownPresenter @Inject constructor(
 			while (true) {
 				emitState(BlueBoxState(dateFormatter.format(time)))
 				time--
-				delay(500.milliseconds)
+				delay(Random.nextInt(10, 1000).milliseconds)
 			}
 		}
 	}
@@ -631,7 +657,7 @@ class ResetButtonUi @Inject constructor(presenter: ResetButtonPresenter) : Ui(pr
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(ResetTimerEvent()) }) {
-			Text(text = "Reset")
+			Text(text = "Reset", fontSize = 30.sp)
 		}
 	}
 }
@@ -659,7 +685,35 @@ class GoBlueButtonUi @Inject constructor(presenter: GoBlueButtonPresenter) : Ui(
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(GoBlueClickedEvent()) }) {
-			Text(text = "Go Blue")
+			Text(text = "Go Blue", fontSize = 30.sp)
+		}
+	}
+}
+
+class GoVortexClickedEvent : UiEvent
+class GoVortexButtonPresenter @Inject constructor(
+	private val navigation: Navigation
+) : Presenter() {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
+		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
+		when (event) {
+			is GoVortexClickedEvent -> {
+				launchWorker("go vortex") {
+					emulateProgressDelay("going vortex")
+					navigation.navigateToVortex()
+				}
+				return true
+			}
+		}
+		return false
+	}
+}
+
+class GoVortexButtonUi @Inject constructor(presenter: GoVortexButtonPresenter) : Ui(presenter) {
+	@Composable
+	override fun RenderSelf(state: Flow<UiState>) {
+		Button(onClick = { event(GoVortexClickedEvent()) }) {
+			Text(text = "Go Vortex", fontSize = 30.sp)
 		}
 	}
 }
@@ -687,7 +741,7 @@ class GoRedButtonUi @Inject constructor(presenter: GoRedButtonPresenter) : Ui(pr
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(GoRedClickedEvent()) }) {
-			Text(text = "Go Red")
+			Text(text = "Go Red", fontSize = 30.sp)
 		}
 	}
 }
@@ -714,7 +768,7 @@ class GoRedAndBlueButtonUi @Inject constructor(presenter: GoRedAndBlueButtonPres
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		Button(onClick = { event(GoRedAndBlueClickedEvent()) }) {
-			Text(text = "Go Red and Blue")
+			Text(text = "Go Red and Blue", fontSize = 30.sp)
 		}
 	}
 }
@@ -729,23 +783,61 @@ class BlueBoxWithTimerDownUi @Inject constructor(
 	presenter,
 	resetButtonUi,
 	goRedButtonUi,
-	goRedAndBlueButtonUi
+	goRedAndBlueButtonUi,
+	progressAndStateUi
 ) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val blueBoxState = state.filterIsInstance<BlueBoxState>().collectAsState(initial = BlueBoxState(""))
 		Box(
 			modifier = Modifier
-				.width(130.dp)
+				.width(430.dp)
 				.background(color = Color.Blue)
 		) {
 			Column {
-				Text(text = blueBoxState.value.time)
+				Text(text = blueBoxState.value.time, fontSize = 30.sp, color = Color.White)
 				progressAndStateUi()
 				resetButtonUi()
 				goRedButtonUi()
 				goRedAndBlueButtonUi()
 			}
+		}
+	}
+}
+
+class VortexState(val angle: Float) : UiState
+class VortexPresenter @Inject constructor() : Presenter() {
+	override suspend fun handleSelf(event: UiEvent) = false
+	override fun initializeInner() {
+		super.initializeInner()
+		launchWorker("vortex") {
+			var angle = 0f
+			while (true) {
+				delay(100)
+				angle += 1f
+				emitState(VortexState(angle = angle))
+			}
+		}
+	}
+}
+
+class VortexUi @Inject constructor(
+	presenter: VortexPresenter,
+	val redAndBlueBoxesUi: RedAndBlueBoxesUi,
+) : Ui(
+	presenter,
+	redAndBlueBoxesUi
+) {
+	@Composable
+	override fun RenderSelf(state: Flow<UiState>) {
+		val vortexState = state.filterIsInstance<VortexState>().collectAsState(initial = VortexState(0f))
+		Box(
+			modifier = Modifier
+				.width(430.dp)
+				.background(color = Color.Black)
+				.rotate(vortexState.value.angle)
+		) {
+			redAndBlueBoxesUi()
 		}
 	}
 }
