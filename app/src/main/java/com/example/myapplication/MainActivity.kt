@@ -5,6 +5,8 @@ import android.os.Looper
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -814,7 +816,7 @@ class VortexPresenter @Inject constructor() : Presenter() {
 			var angle = 0f
 			while (true) {
 				delay(100)
-				angle += 1f
+				angle += Random.nextFloat() * 10
 				emitState(VortexState(angle = angle))
 			}
 		}
@@ -831,11 +833,13 @@ class VortexUi @Inject constructor(
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
 		val vortexState = state.filterIsInstance<VortexState>().collectAsState(initial = VortexState(0f))
+		val animatedAngle = animateFloatAsState(
+			targetValue = vortexState.value.angle,
+			animationSpec = tween(durationMillis = 100)
+		)
 		Box(
 			modifier = Modifier
-				.width(430.dp)
-				.background(color = Color.Black)
-				.rotate(vortexState.value.angle)
+				.rotate(animatedAngle.value)
 		) {
 			redAndBlueBoxesUi()
 		}
