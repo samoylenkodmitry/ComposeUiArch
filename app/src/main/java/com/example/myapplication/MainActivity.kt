@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +28,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -394,6 +399,7 @@ interface UiComponent {
 	fun blueBoxWithTimerDownUi(): BlueBoxWithTimerDownUi
 	fun redAndBlueBoxesUi(): RedAndBlueBoxesUi
 	fun vortexUi(): VortexUi
+	fun dynamicUi(): DynamicUi
 
 	companion object {
 		fun create(): UiComponent {
@@ -438,6 +444,10 @@ class Navigation @Inject constructor() {
 
 	fun navigateToVortex() {
 		replace(UiComponent.create().vortexUi())
+	}
+
+	fun navigateToDynamicUi() {
+		replace(UiComponent.create().dynamicUi())
 	}
 }
 
@@ -503,7 +513,8 @@ class RedAndBlueBoxesUi @Inject constructor(
 	val goBlueButtonUi: GoBlueButtonUi,
 	val resetButtonUi: ResetButtonUi,
 	val progressAndStateUi: ProgressAndStateUi,
-	val goVortexButtonUi: GoVortexButtonUi
+	val goVortexButtonUi: GoVortexButtonUi,
+	val goDynamicUiButtonUi: GoDynamicUiButtonUi,
 ) : Ui(
 	presenter
 
@@ -517,6 +528,7 @@ class RedAndBlueBoxesUi @Inject constructor(
 				goRedButtonUi()
 				goBlueButtonUi()
 				goVortexButtonUi()
+				goDynamicUiButtonUi()
 			}
 
 			if (redAndBlueState.value.isRow) {
@@ -722,6 +734,34 @@ class GoVortexButtonUi @Inject constructor(presenter: GoVortexButtonPresenter) :
 	}
 }
 
+class GoDynamicUiClickedEvent : UiEvent
+class GoDynamicUiButtonPresenter @Inject constructor(
+	private val navigation: Navigation
+) : Presenter() {
+	override suspend fun handleSelf(event: UiEvent): Boolean {
+		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
+		when (event) {
+			is GoDynamicUiClickedEvent -> {
+				launchWorker("go dynamic ui") {
+					emulateProgressDelay("going dynamic ui")
+					navigation.navigateToDynamicUi()
+				}
+				return true
+			}
+		}
+		return false
+	}
+}
+
+class GoDynamicUiButtonUi @Inject constructor(presenter: GoDynamicUiButtonPresenter) : Ui(presenter) {
+	@Composable
+	override fun RenderSelf(state: Flow<UiState>) {
+		Button(onClick = { event(GoDynamicUiClickedEvent()) }) {
+			Text(text = "Go Dynamic UI", fontSize = 30.sp)
+		}
+	}
+}
+
 class GoRedButtonPresenter @Inject constructor(
 	private val navigation: Navigation
 ) : Presenter() {
@@ -850,6 +890,79 @@ fun log(vararg msg: Any) {
 		"Arch test", "${caller.className}.${caller.methodName}(${caller.fileName}:${caller.lineNumber})" +
 		" ${Thread.currentThread().name}::: ${msg.joinToString { "$it" }}"
 	)
+}
+
+class DynamicState(val uis: List<Ui>) : UiState
+class LoadNextDynamicUiEvent : UiEvent
+class DynamicPresenter @Inject constructor() : Presenter() {
+	val uis = mutableListOf<Ui>()
+
+	init {
+		loadNext()
+	}
+
+	override suspend fun handleSelf(event: UiEvent): Boolean {
+		log("handleSelf: " + event + " thread: " + Thread.currentThread().name + " this: $this")
+		when (event) {
+			is LoadNextDynamicUiEvent -> {
+				loadNext()
+				return true
+			}
+		}
+		return false
+	}
+
+	private fun loadNext() {
+		launchWorker("load next dynamic ui") {
+			emulateProgressDelay("loading next dynamic ui")
+			uis.addAll(
+				(0..Random.nextInt(1, 10)).map {
+					val component = UiComponent.create()
+					when (Random.nextInt(0, 5)) {
+						0 -> component.redAndBlueBoxesUi()
+						1 -> component.redBoxWithTimerUpUi()
+						2 -> component.blueBoxWithTimerDownUi()
+						3 -> component.vortexUi()
+						else -> component.dynamicUi()
+					}
+				}
+			)
+			emitState(DynamicState(uis = uis))
+		}
+	}
+}
+
+class DynamicUi @Inject constructor(
+	presenter: DynamicPresenter
+) : Ui(presenter) {
+	@Composable
+	override fun RenderSelf(state: Flow<UiState>) {
+		val dynamicState = state.filterIsInstance<DynamicState>().collectAsState(initial = DynamicState(listOf()))
+		val listState = rememberLazyListState()
+		LazyColumn(state = listState) {
+			dynamicState.value.uis.forEach {
+				item {
+					Box(
+						modifier = Modifier
+							.fillMaxWidth()
+							.height(200.dp)
+							.background(color = Color.Gray)
+					) {
+
+						it()
+					}
+				}
+			}
+		}
+		LaunchedEffect(Unit) {
+			snapshotFlow { listState.firstVisibleItemIndex }.collect {
+				if (it == listState.layoutInfo.totalItemsCount - 1) {
+					event(LoadNextDynamicUiEvent())
+				}
+			}
+		}
+	}
+
 }
 
 fun assertMainThread() {
