@@ -348,7 +348,6 @@ abstract class Ui(private val presenter: Presenter) {
 
 	companion object {
 		private val LocalPresenter = staticCompositionLocalOf<Presenter?> { null }
-		private val presenterHolder = AtomicReference<Presenter>(null)
 	}
 
 	@Composable
