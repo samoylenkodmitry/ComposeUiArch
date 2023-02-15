@@ -19,13 +19,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +37,7 @@ import dagger.Component
 import dagger.hilt.android.AndroidEntryPoint
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Scope
@@ -96,8 +100,8 @@ abstract class Presenter {
 
 	private var state = State.CREATED
 	private var eventsJob: Job? = null
-	private val plugins = mutableListOf<Presenter>()
-	private var parent: Presenter? = null
+	private val plugins = ConcurrentHashMap<Presenter, Any>()
+	internal var parent: Presenter? = null
 	private val workers = mutableMapOf<String, Job>()
 	private val workersSupervisorJob = SupervisorJob()
 	private val workersCoroutineContext = Dispatchers.Default + workersSupervisorJob
@@ -123,15 +127,18 @@ abstract class Presenter {
 	}
 
 	fun plugin(plugin: Presenter) {
-		expectState(State.CREATED)
-		plugin.expectState(State.CREATED)
-		log(this, plugin)
+		if (plugins.contains(plugin)) return
 		if (plugin.parent != null) {
 			throw Exception("Presenter already has parent")
 		}
-		log(this, "adding plugin to", System.identityHashCode(plugins))
-		plugins.add(plugin)
+		plugins[plugin] = 1
 		plugin.parent = this
+		if (plugin.state == State.CREATED && (state == State.INITIALIZED || state == State.STARTED)) {
+			plugin.initialize()
+		}
+		if (plugin.state == State.INITIALIZED && state == State.STARTED) {
+			plugin.start()
+		}
 	}
 
 	private fun unplug(plugin: Presenter) {
@@ -147,8 +154,8 @@ abstract class Presenter {
 	fun initialize() {
 		expectState(State.CREATED)
 		log(this)
-		plugins.forEach {
-			it.initialize()
+		plugins.forEach { (plugin, _) ->
+			plugin.initialize()
 		}
 		initializeInner()
 		state = State.INITIALIZED
@@ -157,8 +164,8 @@ abstract class Presenter {
 	fun start() {
 		expectState(State.INITIALIZED, State.STOPPED)
 		log(this)
-		plugins.forEach {
-			it.start()
+		plugins.forEach { (plugin, _) ->
+			plugin.start()
 		}
 		val ths = this
 		eventsJob = eventsScope.launch {
@@ -177,13 +184,13 @@ abstract class Presenter {
 		log(this, plugins)
 		eventsJob?.cancel()
 		log(this, "stopping plugins", System.identityHashCode(plugins))
-		plugins.forEach {
-			if (it.state == State.STOPPED) {
-				it.tmp?.printStackTrace()
-				throw Error("plugin is already stopped, this=$this, plugin=$it, ${plugins.joinToString()}", it.tmp)
+		plugins.forEach { (plugin, _) ->
+			if (plugin.state == State.STOPPED) {
+				plugin.tmp?.printStackTrace()
+				throw Error("plugin is already stopped, this=$this, plugin=$plugin, ${plugins.keys.joinToString()}", plugin.tmp)
 			}
-			it.stop()
-			it.tmp = Error("I am stopping this plugin, this=$this, plugin=$it")
+			plugin.stop()
+			plugin.tmp = Error("I am stopping this plugin, this=$this, plugin=$plugin")
 		}
 		state = State.STOPPED
 	}
@@ -192,9 +199,9 @@ abstract class Presenter {
 		expectState(State.STOPPED)
 		log(this, plugins)
 		destroyInner()
-		plugins.forEach {
-			it.destroy()
-			unplug(it)
+		plugins.forEach { (plugin, _) ->
+			plugin.destroy()
+			unplug(plugin)
 		}
 		log(this, "clearing plugins", System.identityHashCode(plugins))
 		//plugins.clear() <-- concurrent modification exception
@@ -216,7 +223,7 @@ abstract class Presenter {
 	 */
 	private suspend fun handleInner(event: UiEvent, caller: Presenter): Boolean =
 		handleSelf(event) ||
-			plugins.any { it !== caller && it.handleInner(event, this) } ||
+			plugins.any { (it, _) -> it !== caller && it.handleInner(event, this) } ||
 			parent !== caller && parent?.handleInner(event, this) ?: false
 
 
@@ -253,9 +260,8 @@ abstract class Presenter {
 	 * 3. Parent
 	 */
 	private suspend fun emitStateInner(state: UiState, caller: Presenter) {
-		if (state is ProgressState) log(this, state, caller)
 		sharedStatesFlow.emit(state)
-		plugins.forEach { if (it != caller) it.emitStateInner(state, this) }
+		plugins.forEach { (it, _) -> if (it != caller) it.emitStateInner(state, this) }
 		if (parent != caller) parent?.emitStateInner(state, this)
 	}
 
@@ -281,13 +287,7 @@ abstract class Presenter {
  * This class provides a framework for creating user interfaces with
  * presenters and subcomponents.
  */
-abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
-	init {
-		log("creating a new Ui", this)
-		subcomponents.forEach {
-			presenter.plugin(it.presenter)
-		}
-	}
+abstract class Ui(private val presenter: Presenter) {
 
 	enum class State {
 		CREATED, INITIALIZING, INITIALIZED, STARTING, STARTED, STOPPING, STOPPED, DESTROYING, DESTROYED,
@@ -346,11 +346,25 @@ abstract class Ui(private val presenter: Presenter, vararg subcomponents: Ui) {
 		presenter.emitEvent(event)
 	}
 
+	data class PresenterHolder(val presenter: Presenter? = null)
+
+	companion object {
+		val LocalPresenter = staticCompositionLocalOf { PresenterHolder() }
+	}
+
 	@Composable
 	operator fun invoke() {
+		LocalContext.current
+		val parentPresenter = LocalPresenter.current.presenter
+		if (parentPresenter != null && presenter.parent == null) {
+			log("xoxoxo current ui is $this, parent is $parentPresenter")
+			parentPresenter.plugin(presenter)
+		}
 		if (!presenter.ensureStarted()) throw Exception("$this Ui is not started")
 
-		RenderSelf(presenter.sharedStates())
+		CompositionLocalProvider(LocalPresenter provides PresenterHolder(presenter)) {
+			RenderSelf(presenter.sharedStates())
+		}
 	}
 
 	@Composable
@@ -402,7 +416,6 @@ class Navigation @Inject constructor() {
 
 	var current = mutableStateOf<Ui?>(null)
 	private fun replace(new: Ui) {
-		Error("new UI $new, thread: ${Thread.currentThread().name} ${Thread.currentThread().id}").printStackTrace()
 		new.initialize()
 		new.start()
 		val old = synchronized(this) {
@@ -496,9 +509,7 @@ class RedAndBlueBoxesUi @Inject constructor(
 	val progressAndStateUi: ProgressAndStateUi,
 	val goVortexButtonUi: GoVortexButtonUi
 ) : Ui(
-	presenter,
-	redBoxWithTimerUp, blueBoxWithTimerDown,
-	goRedButtonUi, goBlueButtonUi, resetButtonUi, goVortexButtonUi, progressAndStateUi
+	presenter
 
 ) {
 	@Composable
@@ -571,11 +582,7 @@ class RedBoxWithTimerUpUi @Inject constructor(
 	val goRedAndBlueButtonUi: GoRedAndBlueButtonUi,
 	val progressAndStateUi: ProgressAndStateUi
 ) : Ui(
-	presenter,
-	resetButtonUi,
-	goBlueButtonUi,
-	goRedAndBlueButtonUi,
-	progressAndStateUi
+	presenter
 ) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
@@ -606,7 +613,6 @@ class ProgressAndStateUi @Inject constructor(presenter: ProgressAndStatePresente
 		val progress = state.filterIsInstance<ProgressState>().collectAsState(initial = ProgressState(-1f, ""))
 
 		if (progress.value.progress >= 0) {
-			log("ProgressAndStateUi: progress: " + progress.value)
 			Column {
 				LinearProgressIndicator(progress = progress.value.progress)
 				Text(text = progress.value.state, fontSize = 30.sp, color = Color.White)
@@ -782,11 +788,7 @@ class BlueBoxWithTimerDownUi @Inject constructor(
 	val goRedAndBlueButtonUi: GoRedAndBlueButtonUi,
 	val progressAndStateUi: ProgressAndStateUi
 ) : Ui(
-	presenter,
-	resetButtonUi,
-	goRedButtonUi,
-	goRedAndBlueButtonUi,
-	progressAndStateUi
+	presenter
 ) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
@@ -827,8 +829,7 @@ class VortexUi @Inject constructor(
 	presenter: VortexPresenter,
 	val redAndBlueBoxesUi: RedAndBlueBoxesUi,
 ) : Ui(
-	presenter,
-	redAndBlueBoxesUi
+	presenter
 ) {
 	@Composable
 	override fun RenderSelf(state: Flow<UiState>) {
