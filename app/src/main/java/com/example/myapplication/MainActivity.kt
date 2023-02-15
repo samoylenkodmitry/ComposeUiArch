@@ -28,7 +28,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -346,23 +345,21 @@ abstract class Ui(private val presenter: Presenter) {
 		presenter.emitEvent(event)
 	}
 
-	data class PresenterHolder(val presenter: Presenter? = null)
 
 	companion object {
-		val LocalPresenter = staticCompositionLocalOf { PresenterHolder() }
+		private val LocalPresenter = staticCompositionLocalOf<Presenter?> { null }
+		private val presenterHolder = AtomicReference<Presenter>(null)
 	}
 
 	@Composable
 	operator fun invoke() {
-		LocalContext.current
-		val parentPresenter = LocalPresenter.current.presenter
+		val parentPresenter = LocalPresenter.current
 		if (parentPresenter != null && presenter.parent == null) {
-			log("xoxoxo current ui is $this, parent is $parentPresenter")
 			parentPresenter.plugin(presenter)
 		}
 		if (!presenter.ensureStarted()) throw Exception("$this Ui is not started")
 
-		CompositionLocalProvider(LocalPresenter provides PresenterHolder(presenter)) {
+		CompositionLocalProvider(LocalPresenter provides presenter) {
 			RenderSelf(presenter.sharedStates())
 		}
 	}
